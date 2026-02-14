@@ -68,9 +68,16 @@ async function fetchFromTheMarker(ticker) {
       return { ticker, success: false, error: 'Failed to parse price from TheMarker' };
     }
 
-    // Detect if price is in agorot: look for "באגורות" or "באג׳" in the text
-    const isAgorot = /שינוי\s*באגורות|שינוי\s*באג[׳']/i.test(bodyText);
-    if (isAgorot) {
+    // Detect if price is in agorot:
+    // For bonds: price > 10 typically means shekels (government bonds quoted as % of par)
+    // For stocks/ETFs: "שינוי באג׳" indicator means price is in agorot
+    const isBond = /אג["׳']ח|bond/i.test(pageTitle);
+    const hasAgorotIndicator = /שינוי\s*באגורות|שינוי\s*באג[׳']/i.test(bodyText);
+
+    if (isBond && price > 10) {
+      // Bonds with price > 10 are in shekels - don't convert
+    } else if (hasAgorotIndicator) {
+      // For non-bonds (stocks/ETFs) or small-priced bonds, agorot indicator means convert
       price = price / 100;
     }
 
@@ -161,9 +168,28 @@ async function fetchFromBizportal(ticker) {
       };
     }
 
-    // Agorot conversion: mutual funds are in NIS, everything else is in agorot
-    if (category !== 'mutualfunds') {
-      price = price / 100;
+    // Agorot conversion logic:
+    // - Mutual funds are always in NIS
+    // - For bonds and other securities, check for explicit "באגורות" indicator
+    // - If price > 10 for bonds, it's likely in NIS (not agorot)
+    // - Otherwise assume agorot for stocks/ETFs
+
+    const isAgorot = /באגורות|באג[׳']/i.test(bodyText);
+
+    if (category === 'mutualfunds') {
+      // Mutual funds are always in NIS, no conversion needed
+    } else if (category === 'bonds') {
+      // For bonds: only convert if explicitly marked as agorot AND price <= 10
+      // (Government bonds and most corporate bonds are quoted in NIS)
+      if (isAgorot && price <= 10) {
+        price = price / 100;
+      }
+      // Otherwise keep as-is (already in NIS)
+    } else {
+      // For stocks and ETFs: default to agorot unless marked otherwise
+      if (!isAgorot) {
+        price = price / 100;
+      }
     }
 
     return {
